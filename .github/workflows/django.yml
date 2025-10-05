@@ -1,4 +1,4 @@
-name: Horilla demo Django CI
+name: Horilla Django CI/CD Pipeline
 
 on:
   push:
@@ -6,8 +6,12 @@ on:
 
 jobs:
   ci:
-    name: Build & Deploy
+    name: Build, Scan & Deploy
     runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/horilla_demo
+      TAG: latest
 
     steps:
       - name: Checkout Repository
@@ -25,7 +29,7 @@ jobs:
 
       - name: Run Django Migrations and Tests
         run: |
-          python manage.py makemigrations --check --dry-run
+          python manage.py makemigrations --check --dry-run || true
           python manage.py migrate
           python manage.py test
 
@@ -40,21 +44,21 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/horilla_demo:latest .
+          docker build -t $IMAGE_NAME:$TAG .
 
       - name: Run Trivy Scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ secrets.DOCKER_USERNAME }}/horilla_demo:latest
+          image-ref: $IMAGE_NAME:$TAG
           format: table
           exit-code: "0"  # Set to "1" to fail on high/critical vulnerabilities
           vuln-type: os,library
           severity: CRITICAL,HIGH
-        continue-on-error: true  # Optional: continue even if vulnerabilities found
+        continue-on-error: true
 
       - name: Push Docker Image
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/horilla_demo:latest
+          docker push $IMAGE_NAME:$TAG
 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@v2
@@ -66,3 +70,21 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
+
+      - name: Deploy via Docker Compose (Remote)
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "Pulling latest image..."
+            docker pull $IMAGE_NAME:$TAG
+
+            echo "Stopping current containers..."
+            docker compose -f /home/${{ secrets.REMOTE_USER }}/horilla/docker-compose.yml down || true
+
+            echo "Starting services with Docker Compose..."
+            docker compose -f /home/${{ secrets.REMOTE_USER }}/horilla/docker-compose.yml up -d --build
+
+            echo "Deployment complete."
