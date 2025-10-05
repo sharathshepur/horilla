@@ -1,4 +1,4 @@
-name: Horilla Django CI/CD Pipeline
+name: Horilla Django CI/CD Pipeline 
 
 on:
   push:
